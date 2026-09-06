@@ -466,7 +466,7 @@ static ParserLanguage prv_language_from_tuple(const Tuple *tuple) {
     return s_input_language;
   }
 
-  if (tuple->type == TUPLE_CSTRING && tuple->value->cstring) {
+  if (tuple->type == TUPLE_CSTRING) {
     if (!strcmp(tuple->value->cstring, "de")) return PARSER_LANGUAGE_GERMAN;
     if (!strcmp(tuple->value->cstring, "fr")) return PARSER_LANGUAGE_FRENCH;
     return PARSER_LANGUAGE_ENGLISH;
