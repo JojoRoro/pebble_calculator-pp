@@ -7,8 +7,8 @@ The aim is simple: make a calculator that feels like it belongs on a Pebble Time
 ## What works
 
 - **Touch calculator** with a 4x4 keypad plus dedicated Clear, Delete, and Voice controls.
-- **Physical-button calculator**: Up/Down move through keypad choices, Select activates the focused key, Back deletes, and long Back clears.
-- **Voice input** using Pebble's normal Dictation UI. Long-press Select or tap **VOICE**.
+- **Physical-button calculator**: Select starts voice immediately when the app opens; Up/Down enter keypad navigation, after which Select activates the focused key. Back deletes and long Back clears.
+- **Voice input** using Pebble's normal Dictation UI. Press Select from the default app state, long-press Select, or tap **VOICE**.
 - **Deterministic natural-language parser** for common phrases such as:
   - `22 divided by 55 plus 8 equals`
   - `twenty two divided by fifty five plus eight`
@@ -40,8 +40,9 @@ The screen contains:
 
 ### Physical buttons
 
-- **Up / Down:** move the keypad focus (hold to move quickly)
-- **Select:** activate the focused key
+- **Select on app open / before keypad navigation:** start voice input
+- **Up / Down:** enter keypad navigation and move the keypad focus (hold to move quickly)
+- **Select after keypad focus is active:** activate the focused key
 - **Hold Select:** start voice input
 - **Back:** delete one character; when already empty, leave the app
 - **Hold Back:** clear the calculation
