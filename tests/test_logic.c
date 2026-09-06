@@ -5,13 +5,17 @@
 #include "../src/c/calculator.h"
 #include "../src/c/parser.h"
 
+static void check_expression(const char *expression, const char *result) {
+  assert(calculator_set_expression(expression));
+  assert(calculator_equals());
+  assert(strcmp(calculator_result(), result) == 0);
+}
+
 static void check_voice(const char *speech, const char *expression, const char *result) {
   char parsed[CALCULATOR_EXPRESSION_MAX];
   assert(parser_normalize_expression(speech, parsed, sizeof(parsed)));
   assert(strcmp(parsed, expression) == 0);
-  assert(calculator_set_expression(parsed));
-  assert(calculator_equals());
-  assert(strcmp(calculator_result(), result) == 0);
+  check_expression(parsed, result);
 }
 
 int main(void) {
@@ -28,6 +32,12 @@ int main(void) {
   check_voice("55 plus 17.", "55+17", "72");
   check_voice("fifty point five plus two.", "50.5+2", "52.5");
   check_voice("5.5 over 10.", "5.5/10", "0.55");
+
+  // Results must not depend on printf floating-point formatting, which Pebble omits.
+  check_expression("5+10", "15");
+  check_expression("55/7", "7.857142857");
+  check_expression("1/8", "0.125");
+  check_expression("0.1+0.2", "0.3");
 
   calculator_clear();
   calculator_append_digit('1');
