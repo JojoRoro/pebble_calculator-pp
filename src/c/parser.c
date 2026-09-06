@@ -31,7 +31,18 @@ static int prv_tokenize(const char *input, Token tokens[]) {
     const unsigned char raw = (unsigned char)input[i];
     const char c = (char)tolower(raw);
 
-    if (isalnum(raw) || c == '.') {
+    if (isalnum(raw)) {
+      if (length < TOKEN_SIZE - 1) {
+        buffer[length++] = c;
+      }
+      continue;
+    }
+
+    // Keep a period only when it begins/continues a decimal number. Dictation commonly appends
+    // sentence punctuation (for example "five over ten."), which must not become part of a word
+    // token such as "ten.". Looking at the following character preserves both 5.5 and .5 while
+    // treating a trailing period as punctuation.
+    if (c == '.' && isdigit((unsigned char)input[i + 1])) {
       if (length < TOKEN_SIZE - 1) {
         buffer[length++] = c;
       }
