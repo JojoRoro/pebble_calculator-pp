@@ -1,7 +1,7 @@
 {
   "name": "pebble-calculator-pp",
   "author": "JojoRoro",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "keywords": [
     "pebble-app",
     "calculator",
@@ -23,7 +23,8 @@
       "watchface": false
     },
     "messageKeys": [
-      "VoiceAutoSubmit"
+      "VoiceAutoSubmit",
+      "DebugMode"
     ],
     "resources": {
       "media": []
