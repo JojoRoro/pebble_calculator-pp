@@ -1,0 +1,32 @@
+{
+  "name": "pebble-calculator-pp",
+  "author": "JojoRoro",
+  "version": "0.2.0",
+  "keywords": [
+    "pebble-app",
+    "calculator",
+    "pebble-time-2"
+  ],
+  "private": true,
+  "dependencies": {
+    "@rebble/clay": "^1.0.10"
+  },
+  "pebble": {
+    "displayName": "Pebble Calculator++",
+    "uuid": "4f5c1f9a-7f3d-4e3a-9a5b-000000000001",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "VoiceAutoSubmit"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}

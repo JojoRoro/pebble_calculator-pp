@@ -1,0 +1,26 @@
+[
+  {
+    "type": "heading",
+    "defaultValue": "Pebble Calculator++"
+  },
+  {
+    "type": "section",
+    "items": [
+      {
+        "type": "heading",
+        "defaultValue": "Voice input"
+      },
+      {
+        "type": "toggle",
+        "messageKey": "VoiceAutoSubmit",
+        "label": "Calculate immediately",
+        "description": "On: a successful voice transcription is calculated immediately. Off: the recognized expression stays editable on the watch before you press equals.",
+        "defaultValue": true
+      },
+      {
+        "type": "text",
+        "defaultValue": "Math parsing and evaluation are deterministic and run on the watch. Voice transcription itself uses Pebble's normal dictation flow through the paired phone."
+      }
+    ]
+  }
+]
