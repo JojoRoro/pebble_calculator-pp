@@ -28,7 +28,7 @@ static DictationSession *s_dictation_session;
 static bool s_voice_auto_submit = true;
 static bool s_debug_mode = false;
 static bool s_debug_overlay_visible = false;
-static int s_focus_index = 0;
+static int s_focus_index = -1;
 static int s_touch_down_target = TOUCH_TARGET_NONE;
 static int s_pressed_target = TOUCH_TARGET_NONE;
 static char s_notice[64];
@@ -53,7 +53,7 @@ static void prv_set_notice(const char *text) {
 }
 
 static void prv_set_default_notice(void) {
-  prv_set_notice(s_voice_auto_submit ? "Voice: AUTO  |  hold SELECT" : "Voice: EDIT  |  hold SELECT");
+  prv_set_notice(s_voice_auto_submit ? "Voice: AUTO  |  SELECT to speak" : "Voice: EDIT  |  SELECT to speak");
 }
 
 static void prv_hide_debug_overlay(void) {
@@ -376,7 +376,11 @@ static void prv_move_focus(int delta) {
   }
 
   const int count = KEYPAD_ROWS * KEYPAD_COLS;
-  s_focus_index = (s_focus_index + delta + count) % count;
+  if (s_focus_index < 0) {
+    s_focus_index = delta > 0 ? 0 : count - 1;
+  } else {
+    s_focus_index = (s_focus_index + delta + count) % count;
+  }
   prv_mark_dirty();
 }
 
@@ -395,6 +399,12 @@ static void prv_down_click(ClickRecognizerRef recognizer, void *context) {
 static void prv_select_click(ClickRecognizerRef recognizer, void *context) {
   (void)recognizer;
   (void)context;
+
+  if (s_focus_index < 0) {
+    prv_start_voice();
+    return;
+  }
+
   prv_activate_key(s_focus_index);
 }
 
@@ -497,6 +507,7 @@ static void prv_init(void) {
                      ? persist_read_bool(PERSIST_KEY_DEBUG_MODE)
                      : false;
   s_debug_transcription[0] = '\0';
+  s_focus_index = -1;
   prv_set_default_notice();
 
   s_window = window_create();
