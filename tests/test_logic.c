@@ -23,6 +23,12 @@ int main(void) {
   check_voice("negative five plus two", "-5+2", "-3");
   check_voice("2 plus 3 times 4", "2+3*4", "14");
 
+  // Pebble dictation commonly adds sentence punctuation to an otherwise valid transcript.
+  check_voice("Five over ten.", "5/10", "0.5");
+  check_voice("55 plus 17.", "55+17", "72");
+  check_voice("fifty point five plus two.", "50.5+2", "52.5");
+  check_voice("5.5 over 10.", "5.5/10", "0.55");
+
   calculator_clear();
   calculator_append_digit('1');
   calculator_append_digit('0');
