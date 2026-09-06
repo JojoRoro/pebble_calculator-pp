@@ -11,6 +11,18 @@
         "defaultValue": "Voice input"
       },
       {
+        "type": "select",
+        "messageKey": "InputLanguage",
+        "label": "Calculation language",
+        "description": "Selects the vocabulary and number grammar used to interpret dictation. Pebble's built-in speech recognizer chooses its recognition language outside this app.",
+        "defaultValue": "en",
+        "options": [
+          { "label": "English", "value": "en" },
+          { "label": "Deutsch", "value": "de" },
+          { "label": "Français", "value": "fr" }
+        ]
+      },
+      {
         "type": "toggle",
         "messageKey": "VoiceAutoSubmit",
         "label": "Calculate immediately",
