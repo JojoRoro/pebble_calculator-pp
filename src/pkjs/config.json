@@ -29,5 +29,9 @@
         "defaultValue": "Math parsing and evaluation are deterministic and run on the watch. Voice transcription itself uses Pebble's normal dictation flow through the paired phone."
       }
     ]
+  },
+  {
+    "type": "submit",
+    "defaultValue": "Save settings"
   }
 ]
