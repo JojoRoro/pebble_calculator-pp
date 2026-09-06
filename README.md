@@ -20,6 +20,9 @@ The aim is simple: make a calculator that feels like it belongs on a Pebble Time
 - **Voice Auto/Edit setting** in the Pebble phone app via an offline Clay configuration page.
   - Auto: recognized speech is calculated immediately.
   - Edit: the recognized expression is placed into the calculator for review/editing first.
+- **Voice Debug mode** in the Pebble phone app.
+  - When enabled, an unparseable voice result displays the complete raw dictation transcript in a box on the watch.
+  - Press Back to dismiss the debug transcript and return to the calculator.
 
 All calculation parsing and evaluation is local and deterministic; there is no LLM involved. Voice transcription itself is supplied by Pebble's standard phone-mediated dictation service.
 
@@ -42,6 +45,7 @@ The screen contains:
 - **Hold Select:** start voice input
 - **Back:** delete one character; when already empty, leave the app
 - **Hold Back:** clear the calculation
+- **Back while a debug transcript is displayed:** dismiss the transcript
 
 ## Voice vocabulary
 
@@ -63,7 +67,7 @@ The current release intentionally targets **Pebble Time 2 only** so the UI can u
 
 ## Build
 
-With the current Pebble tooling installed:
+The project is intended to build directly in CloudPebble. For local builds with current Pebble tooling installed:
 
 ```sh
 uv tool install pebble-tool
@@ -78,7 +82,7 @@ Install to the Pebble Time 2 emulator:
 pebble install --emulator emery --logs
 ```
 
-The GitHub Actions workflow also runs host-side parser/evaluator tests, builds the app with the latest Pebble SDK, and uploads the resulting `.pbw` as an artifact.
+There is no GitHub Actions build workflow; CloudPebble is the primary build path.
 
 ## Project structure
 
