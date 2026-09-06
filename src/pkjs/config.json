@@ -18,6 +18,13 @@
         "defaultValue": true
       },
       {
+        "type": "toggle",
+        "messageKey": "DebugMode",
+        "label": "Debug mode",
+        "description": "When enabled, a voice calculation that cannot be parsed shows the complete raw transcription returned by Pebble dictation on the watch. Press Back to dismiss it.",
+        "defaultValue": false
+      },
+      {
         "type": "text",
         "defaultValue": "Math parsing and evaluation are deterministic and run on the watch. Voice transcription itself uses Pebble's normal dictation flow through the paired phone."
       }
