@@ -1,6 +1,7 @@
 #include "calculator.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -38,6 +39,160 @@ static bool prv_append_char(char c) {
 
   s_expression[len] = c;
   s_expression[len + 1] = '\0';
+  return true;
+}
+
+static bool prv_result_append_char(char *buffer, size_t buffer_size, size_t *length, char c) {
+  if (*length + 1 >= buffer_size) {
+    return false;
+  }
+  buffer[(*length)++] = c;
+  buffer[*length] = '\0';
+  return true;
+}
+
+static bool prv_result_append_unsigned(char *buffer, size_t buffer_size, size_t *length,
+                                       unsigned int value) {
+  char reversed[12];
+  int count = 0;
+
+  do {
+    reversed[count++] = (char)('0' + (value % 10));
+    value /= 10;
+  } while (value && count < (int)sizeof(reversed));
+
+  while (count > 0) {
+    if (!prv_result_append_char(buffer, buffer_size, length, reversed[--count])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Pebble's lightweight printf does not support floating-point conversions such
+// as %f/%g. Keep calculation in double, but format the result ourselves.
+static bool prv_format_result(double value, char *buffer, size_t buffer_size) {
+  if (!buffer || buffer_size < 2) {
+    return false;
+  }
+
+  buffer[0] = '\0';
+  size_t length = 0;
+
+  if (prv_abs(value) < 1e-12) {
+    value = 0.0;
+  }
+
+  if (value < 0.0) {
+    if (!prv_result_append_char(buffer, buffer_size, &length, '-')) {
+      return false;
+    }
+    value = -value;
+  }
+
+  if (value == 0.0) {
+    return prv_result_append_char(buffer, buffer_size, &length, '0');
+  }
+
+  int exponent = 0;
+  double normalized = value;
+  while (normalized >= 10.0 && exponent < 100) {
+    normalized /= 10.0;
+    exponent++;
+  }
+  while (normalized < 1.0 && exponent > -100) {
+    normalized *= 10.0;
+    exponent--;
+  }
+
+  if (normalized >= 10.0 || normalized < 1.0) {
+    return false;
+  }
+
+  // Ten significant decimal digits, matching the old %.10g intent.
+  uint64_t scaled = (uint64_t)(normalized * 1000000000.0 + 0.5);
+  if (scaled >= 10000000000ULL) {
+    scaled /= 10;
+    exponent++;
+  }
+
+  char digits[11];
+  digits[10] = '\0';
+  for (int i = 9; i >= 0; --i) {
+    digits[i] = (char)('0' + (scaled % 10));
+    scaled /= 10;
+  }
+
+  int significant_count = 10;
+  while (significant_count > 1 && digits[significant_count - 1] == '0') {
+    significant_count--;
+  }
+
+  const bool scientific = exponent >= 10 || exponent <= -5;
+  if (scientific) {
+    if (!prv_result_append_char(buffer, buffer_size, &length, digits[0])) {
+      return false;
+    }
+    if (significant_count > 1) {
+      if (!prv_result_append_char(buffer, buffer_size, &length, '.')) {
+        return false;
+      }
+      for (int i = 1; i < significant_count; ++i) {
+        if (!prv_result_append_char(buffer, buffer_size, &length, digits[i])) {
+          return false;
+        }
+      }
+    }
+
+    if (!prv_result_append_char(buffer, buffer_size, &length, 'e')) {
+      return false;
+    }
+    if (exponent < 0) {
+      if (!prv_result_append_char(buffer, buffer_size, &length, '-')) {
+        return false;
+      }
+      exponent = -exponent;
+    } else if (!prv_result_append_char(buffer, buffer_size, &length, '+')) {
+      return false;
+    }
+    return prv_result_append_unsigned(buffer, buffer_size, &length, (unsigned int)exponent);
+  }
+
+  const int decimal_position = exponent + 1;
+  if (decimal_position <= 0) {
+    if (!prv_result_append_char(buffer, buffer_size, &length, '0') ||
+        !prv_result_append_char(buffer, buffer_size, &length, '.')) {
+      return false;
+    }
+    for (int i = 0; i < -decimal_position; ++i) {
+      if (!prv_result_append_char(buffer, buffer_size, &length, '0')) {
+        return false;
+      }
+    }
+    for (int i = 0; i < significant_count; ++i) {
+      if (!prv_result_append_char(buffer, buffer_size, &length, digits[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  for (int i = 0; i < significant_count; ++i) {
+    if (i == decimal_position &&
+        !prv_result_append_char(buffer, buffer_size, &length, '.')) {
+      return false;
+    }
+    if (!prv_result_append_char(buffer, buffer_size, &length, digits[i])) {
+      return false;
+    }
+  }
+
+  for (int i = significant_count; i < decimal_position; ++i) {
+    if (!prv_result_append_char(buffer, buffer_size, &length, '0')) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -345,11 +500,13 @@ bool calculator_equals(void) {
     return false;
   }
 
-  if (prv_abs(value) < 1e-12) {
-    value = 0.0;
+  if (!prv_format_result(value, s_result, sizeof(s_result))) {
+    s_has_result = false;
+    s_has_error = true;
+    snprintf(s_result, sizeof(s_result), "%s", "Result out of range");
+    return false;
   }
 
-  snprintf(s_result, sizeof(s_result), "%.10g", value);
   s_has_result = true;
   s_has_error = false;
   return true;
