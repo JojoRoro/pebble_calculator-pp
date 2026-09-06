@@ -7,6 +7,7 @@
 #include "parser.h"
 
 #define PERSIST_KEY_VOICE_AUTO_SUBMIT 1
+#define PERSIST_KEY_DEBUG_MODE 2
 #define DICTATION_BUFFER_SIZE 160
 
 #define TOOLBAR_Y 78
@@ -25,10 +26,13 @@ static Layer *s_canvas_layer;
 static DictationSession *s_dictation_session;
 
 static bool s_voice_auto_submit = true;
+static bool s_debug_mode = false;
+static bool s_debug_overlay_visible = false;
 static int s_focus_index = 0;
 static int s_touch_down_target = TOUCH_TARGET_NONE;
 static int s_pressed_target = TOUCH_TARGET_NONE;
 static char s_notice[64];
+static char s_debug_transcription[DICTATION_BUFFER_SIZE];
 
 static const char *const s_key_labels[KEYPAD_ROWS * KEYPAD_COLS] = {
     "7", "8", "9", "/",
@@ -52,6 +56,28 @@ static void prv_set_default_notice(void) {
   prv_set_notice(s_voice_auto_submit ? "Voice: AUTO  |  hold SELECT" : "Voice: EDIT  |  hold SELECT");
 }
 
+static void prv_hide_debug_overlay(void) {
+  if (!s_debug_overlay_visible) {
+    return;
+  }
+
+  s_debug_overlay_visible = false;
+  s_debug_transcription[0] = '\0';
+  prv_mark_dirty();
+}
+
+static void prv_show_debug_transcript(const char *transcription) {
+  if (!s_debug_mode || !transcription) {
+    return;
+  }
+
+  snprintf(s_debug_transcription, sizeof(s_debug_transcription), "%s", transcription);
+  s_debug_overlay_visible = true;
+  s_touch_down_target = TOUCH_TARGET_NONE;
+  s_pressed_target = TOUCH_TARGET_NONE;
+  prv_mark_dirty();
+}
+
 static void prv_draw_button(GContext *ctx, GRect rect, const char *label, bool emphasized,
                             bool focused, bool pressed, bool small_font) {
   const bool dark = emphasized || pressed;
@@ -73,6 +99,46 @@ static void prv_draw_button(GContext *ctx, GRect rect, const char *label, bool e
                      fonts_get_system_font(small_font ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD),
                      GRect(rect.origin.x, rect.origin.y - 1, rect.size.w, rect.size.h + 2),
                      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
+}
+
+static void prv_draw_debug_overlay(GContext *ctx, GRect bounds) {
+  const GRect panel = GRect(7, 18, bounds.size.w - 14, bounds.size.h - 34);
+  const GRect transcript_box = GRect(13, 63, bounds.size.w - 26, bounds.size.h - 101);
+
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_fill_rect(ctx, panel, 3, GCornersAll);
+  graphics_context_set_stroke_color(ctx, GColorBlack);
+  graphics_draw_rect(ctx, panel);
+
+  graphics_context_set_text_color(ctx, GColorBlack);
+  graphics_draw_text(ctx, "VOICE DEBUG",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD),
+                     GRect(12, 23, bounds.size.w - 24, 24),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+
+  graphics_context_set_text_color(ctx, GColorDarkGray);
+  graphics_draw_text(ctx, "Parser failed - raw transcript:",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                     GRect(12, 45, bounds.size.w - 24, 18),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
+
+  graphics_context_set_fill_color(ctx, GColorWhite);
+  graphics_fill_rect(ctx, transcript_box, 0, GCornerNone);
+  graphics_context_set_stroke_color(ctx, GColorDarkGray);
+  graphics_draw_rect(ctx, transcript_box);
+
+  graphics_context_set_text_color(ctx, GColorBlack);
+  graphics_draw_text(ctx, s_debug_transcription,
+                     fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                     GRect(transcript_box.origin.x + 4, transcript_box.origin.y + 3,
+                           transcript_box.size.w - 8, transcript_box.size.h - 6),
+                     GTextOverflowModeWordWrap, GTextAlignmentLeft, NULL);
+
+  graphics_context_set_text_color(ctx, GColorDarkGray);
+  graphics_draw_text(ctx, "BACK to dismiss",
+                     fonts_get_system_font(FONT_KEY_GOTHIC_14),
+                     GRect(12, bounds.size.h - 31, bounds.size.w - 24, 18),
+                     GTextOverflowModeTrailingEllipsis, GTextAlignmentCenter, NULL);
 }
 
 static void prv_canvas_update_proc(Layer *layer, GContext *ctx) {
@@ -131,10 +197,14 @@ static void prv_canvas_update_proc(Layer *layer, GContext *ctx) {
                       index == s_focus_index, s_pressed_target == index, false);
     }
   }
+
+  if (s_debug_overlay_visible) {
+    prv_draw_debug_overlay(ctx, bounds);
+  }
 }
 
 static void prv_activate_key(int index) {
-  if (index < 0 || index >= KEYPAD_ROWS * KEYPAD_COLS) {
+  if (s_debug_overlay_visible || index < 0 || index >= KEYPAD_ROWS * KEYPAD_COLS) {
     return;
   }
 
@@ -185,6 +255,7 @@ static void prv_dictation_callback(DictationSession *session, DictationSessionSt
   if (!parser_normalize_expression(transcription, expression, sizeof(expression)) ||
       !calculator_set_expression(expression)) {
     prv_set_notice("Couldn't parse that calculation");
+    prv_show_debug_transcript(transcription);
     return;
   }
 
@@ -197,6 +268,10 @@ static void prv_dictation_callback(DictationSession *session, DictationSessionSt
 }
 
 static void prv_start_voice(void) {
+  if (s_debug_overlay_visible) {
+    return;
+  }
+
   if (!s_dictation_session) {
     s_dictation_session = dictation_session_create(DICTATION_BUFFER_SIZE,
                                                    prv_dictation_callback, NULL);
@@ -212,6 +287,10 @@ static void prv_start_voice(void) {
 }
 
 static void prv_activate_target(int target) {
+  if (s_debug_overlay_visible) {
+    return;
+  }
+
   if (target >= 0) {
     s_focus_index = target;
     prv_activate_key(target);
@@ -263,7 +342,7 @@ static int prv_touch_target_for_point(int16_t x, int16_t y) {
 
 static void prv_touch_handler(const TouchEvent *event, void *context) {
   (void)context;
-  if (!event) {
+  if (!event || s_debug_overlay_visible) {
     return;
   }
 
@@ -292,6 +371,10 @@ static void prv_touch_handler(const TouchEvent *event, void *context) {
 }
 
 static void prv_move_focus(int delta) {
+  if (s_debug_overlay_visible) {
+    return;
+  }
+
   const int count = KEYPAD_ROWS * KEYPAD_COLS;
   s_focus_index = (s_focus_index + delta + count) % count;
   prv_mark_dirty();
@@ -325,6 +408,11 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
   (void)recognizer;
   (void)context;
 
+  if (s_debug_overlay_visible) {
+    prv_hide_debug_overlay();
+    return;
+  }
+
   if (!calculator_expression()[0] && !calculator_result()[0]) {
     window_stack_pop(true);
     return;
@@ -337,6 +425,12 @@ static void prv_back_click(ClickRecognizerRef recognizer, void *context) {
 static void prv_back_long_click(ClickRecognizerRef recognizer, void *context) {
   (void)recognizer;
   (void)context;
+
+  if (s_debug_overlay_visible) {
+    prv_hide_debug_overlay();
+    return;
+  }
+
   calculator_clear();
   prv_set_default_notice();
 }
@@ -353,14 +447,28 @@ static void prv_click_config_provider(void *context) {
 
 static void prv_inbox_received(DictionaryIterator *iterator, void *context) {
   (void)context;
+  bool settings_changed = false;
+
   Tuple *voice_mode = dict_find(iterator, MESSAGE_KEY_VoiceAutoSubmit);
-  if (!voice_mode) {
-    return;
+  if (voice_mode) {
+    s_voice_auto_submit = voice_mode->value->int32 != 0;
+    persist_write_bool(PERSIST_KEY_VOICE_AUTO_SUBMIT, s_voice_auto_submit);
+    settings_changed = true;
   }
 
-  s_voice_auto_submit = voice_mode->value->int32 != 0;
-  persist_write_bool(PERSIST_KEY_VOICE_AUTO_SUBMIT, s_voice_auto_submit);
-  prv_set_default_notice();
+  Tuple *debug_mode = dict_find(iterator, MESSAGE_KEY_DebugMode);
+  if (debug_mode) {
+    s_debug_mode = debug_mode->value->int32 != 0;
+    persist_write_bool(PERSIST_KEY_DEBUG_MODE, s_debug_mode);
+    if (!s_debug_mode) {
+      prv_hide_debug_overlay();
+    }
+    settings_changed = true;
+  }
+
+  if (settings_changed) {
+    prv_set_default_notice();
+  }
 }
 
 static void prv_window_load(Window *window) {
@@ -385,6 +493,10 @@ static void prv_init(void) {
   s_voice_auto_submit = persist_exists(PERSIST_KEY_VOICE_AUTO_SUBMIT)
                             ? persist_read_bool(PERSIST_KEY_VOICE_AUTO_SUBMIT)
                             : true;
+  s_debug_mode = persist_exists(PERSIST_KEY_DEBUG_MODE)
+                     ? persist_read_bool(PERSIST_KEY_DEBUG_MODE)
+                     : false;
+  s_debug_transcription[0] = '\0';
   prv_set_default_notice();
 
   s_window = window_create();
