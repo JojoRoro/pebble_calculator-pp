@@ -8,6 +8,7 @@
 
 #define PERSIST_KEY_VOICE_AUTO_SUBMIT 1
 #define PERSIST_KEY_DEBUG_MODE 2
+#define PERSIST_KEY_INPUT_LANGUAGE 3
 #define DICTATION_BUFFER_SIZE 160
 
 #define TOOLBAR_Y 78
@@ -28,6 +29,7 @@ static DictationSession *s_dictation_session;
 static bool s_voice_auto_submit = true;
 static bool s_debug_mode = false;
 static bool s_debug_overlay_visible = false;
+static ParserLanguage s_input_language = PARSER_LANGUAGE_ENGLISH;
 static int s_focus_index = -1;
 static int s_touch_down_target = TOUCH_TARGET_NONE;
 static int s_pressed_target = TOUCH_TARGET_NONE;
@@ -41,6 +43,14 @@ static const char *const s_key_labels[KEYPAD_ROWS * KEYPAD_COLS] = {
     "0", ".", "=", "+",
 };
 
+static const char *prv_language_short_name(void) {
+  switch (s_input_language) {
+    case PARSER_LANGUAGE_GERMAN: return "DE";
+    case PARSER_LANGUAGE_FRENCH: return "FR";
+    default: return "EN";
+  }
+}
+
 static void prv_mark_dirty(void) {
   if (s_canvas_layer) {
     layer_mark_dirty(s_canvas_layer);
@@ -53,14 +63,15 @@ static void prv_set_notice(const char *text) {
 }
 
 static void prv_set_default_notice(void) {
-  prv_set_notice(s_voice_auto_submit ? "Voice: AUTO  |  SELECT to speak" : "Voice: EDIT  |  SELECT to speak");
+  snprintf(s_notice, sizeof(s_notice), "%s | Voice: %s | SELECT",
+           prv_language_short_name(), s_voice_auto_submit ? "AUTO" : "EDIT");
+  prv_mark_dirty();
 }
 
 static void prv_hide_debug_overlay(void) {
   if (!s_debug_overlay_visible) {
     return;
   }
-
   s_debug_overlay_visible = false;
   s_debug_transcription[0] = '\0';
   prv_mark_dirty();
@@ -70,7 +81,6 @@ static void prv_show_debug_transcript(const char *transcription) {
   if (!s_debug_mode || !transcription) {
     return;
   }
-
   snprintf(s_debug_transcription, sizeof(s_debug_transcription), "%s", transcription);
   s_debug_overlay_visible = true;
   s_touch_down_target = TOUCH_TARGET_NONE;
@@ -96,7 +106,8 @@ static void prv_draw_button(GContext *ctx, GRect rect, const char *label, bool e
 
   graphics_context_set_text_color(ctx, dark ? GColorWhite : GColorBlack);
   graphics_draw_text(ctx, label,
-                     fonts_get_system_font(small_font ? FONT_KEY_GOTHIC_18_BOLD : FONT_KEY_GOTHIC_24_BOLD),
+                     fonts_get_system_font(small_font ? FONT_KEY_GOTHIC_18_BOLD
+                                                      : FONT_KEY_GOTHIC_24_BOLD),
                      GRect(rect.origin.x, rect.origin.y - 1, rect.size.w, rect.size.h + 2),
                      GTextOverflowModeFill, GTextAlignmentCenter, NULL);
 }
@@ -252,7 +263,8 @@ static void prv_dictation_callback(DictationSession *session, DictationSessionSt
   }
 
   char expression[CALCULATOR_EXPRESSION_MAX];
-  if (!parser_normalize_expression(transcription, expression, sizeof(expression)) ||
+  if (!parser_normalize_expression_for_language(transcription, s_input_language,
+                                                expression, sizeof(expression)) ||
       !calculator_set_expression(expression)) {
     prv_set_notice("Couldn't parse that calculation");
     prv_show_debug_transcript(transcription);
@@ -320,12 +332,8 @@ static int prv_touch_target_for_point(int16_t x, int16_t y) {
   }
 
   if (y >= TOOLBAR_Y && y < TOOLBAR_Y + TOOLBAR_HEIGHT) {
-    if (x < 67) {
-      return TOUCH_TARGET_CLEAR;
-    }
-    if (x < 133) {
-      return TOUCH_TARGET_DELETE;
-    }
+    if (x < 67) return TOUCH_TARGET_CLEAR;
+    if (x < 133) return TOUCH_TARGET_DELETE;
     return TOUCH_TARGET_VOICE;
   }
 
@@ -336,7 +344,6 @@ static int prv_touch_target_for_point(int16_t x, int16_t y) {
       return row * KEYPAD_COLS + col;
     }
   }
-
   return TOUCH_TARGET_NONE;
 }
 
@@ -404,7 +411,6 @@ static void prv_select_click(ClickRecognizerRef recognizer, void *context) {
     prv_start_voice();
     return;
   }
-
   prv_activate_key(s_focus_index);
 }
 
@@ -455,6 +461,23 @@ static void prv_click_config_provider(void *context) {
   window_long_click_subscribe(BUTTON_ID_BACK, 700, prv_back_long_click, NULL);
 }
 
+static ParserLanguage prv_language_from_tuple(const Tuple *tuple) {
+  if (!tuple) {
+    return s_input_language;
+  }
+
+  if (tuple->type == TUPLE_CSTRING && tuple->value->cstring) {
+    if (!strcmp(tuple->value->cstring, "de")) return PARSER_LANGUAGE_GERMAN;
+    if (!strcmp(tuple->value->cstring, "fr")) return PARSER_LANGUAGE_FRENCH;
+    return PARSER_LANGUAGE_ENGLISH;
+  }
+
+  int32_t value = tuple->value->int32;
+  if (value == PARSER_LANGUAGE_GERMAN) return PARSER_LANGUAGE_GERMAN;
+  if (value == PARSER_LANGUAGE_FRENCH) return PARSER_LANGUAGE_FRENCH;
+  return PARSER_LANGUAGE_ENGLISH;
+}
+
 static void prv_inbox_received(DictionaryIterator *iterator, void *context) {
   (void)context;
   bool settings_changed = false;
@@ -473,6 +496,13 @@ static void prv_inbox_received(DictionaryIterator *iterator, void *context) {
     if (!s_debug_mode) {
       prv_hide_debug_overlay();
     }
+    settings_changed = true;
+  }
+
+  Tuple *language = dict_find(iterator, MESSAGE_KEY_InputLanguage);
+  if (language) {
+    s_input_language = prv_language_from_tuple(language);
+    persist_write_int(PERSIST_KEY_INPUT_LANGUAGE, (int)s_input_language);
     settings_changed = true;
   }
 
@@ -506,6 +536,15 @@ static void prv_init(void) {
   s_debug_mode = persist_exists(PERSIST_KEY_DEBUG_MODE)
                      ? persist_read_bool(PERSIST_KEY_DEBUG_MODE)
                      : false;
+
+  int saved_language = persist_exists(PERSIST_KEY_INPUT_LANGUAGE)
+                           ? persist_read_int(PERSIST_KEY_INPUT_LANGUAGE)
+                           : PARSER_LANGUAGE_ENGLISH;
+  if (saved_language < PARSER_LANGUAGE_ENGLISH || saved_language > PARSER_LANGUAGE_FRENCH) {
+    saved_language = PARSER_LANGUAGE_ENGLISH;
+  }
+  s_input_language = (ParserLanguage)saved_language;
+
   s_debug_transcription[0] = '\0';
   s_focus_index = -1;
   prv_set_default_notice();
