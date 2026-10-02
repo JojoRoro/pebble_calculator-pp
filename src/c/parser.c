@@ -14,10 +14,14 @@
 
 typedef char Token[TOKEN_SIZE];
 
-static void prv_flush_token(Token tokens[], int *count, char *buffer, int *length) {
-  if (*length == 0 || *count >= MAX_TOKENS) {
+// Returns false when the token does not fit, so a long transcript fails instead of being cut short.
+static bool prv_flush_token(Token tokens[], int *count, char *buffer, int *length) {
+  if (*length == 0) {
+    return true;
+  }
+  if (*count >= MAX_TOKENS) {
     *length = 0;
-    return;
+    return false;
   }
 
   buffer[*length] = '\0';
@@ -25,6 +29,17 @@ static void prv_flush_token(Token tokens[], int *count, char *buffer, int *lengt
   tokens[*count][TOKEN_SIZE - 1] = '\0';
   (*count)++;
   *length = 0;
+  return true;
+}
+
+static bool prv_push_operator(Token tokens[], int *count, char op) {
+  if (*count >= MAX_TOKENS) {
+    return false;
+  }
+  tokens[*count][0] = op;
+  tokens[*count][1] = '\0';
+  (*count)++;
+  return true;
 }
 
 // Dictation may emit typographic math symbols instead of words. Returns the ASCII operator for a
@@ -46,19 +61,23 @@ static char prv_unicode_operator(const char *input, size_t *length) {
   return '\0';
 }
 
+// Returns the token count, or -1 when the transcript does not fit the token buffers.
 static int prv_tokenize(const char *input, Token tokens[]) {
   int count = 0;
   char buffer[TOKEN_SIZE];
   int length = 0;
+  bool ok = true;
 
-  for (size_t i = 0; input && input[i] != '\0'; ++i) {
+  for (size_t i = 0; ok && input && input[i] != '\0'; ++i) {
     const unsigned char raw = (unsigned char)input[i];
     const char c = (char)tolower(raw);
 
     if (isalnum(raw)) {
-      if (length < TOKEN_SIZE - 1) {
-        buffer[length++] = c;
+      if (length >= TOKEN_SIZE - 1) {
+        ok = false;
+        continue;
       }
+      buffer[length++] = c;
       continue;
     }
 
@@ -67,9 +86,11 @@ static int prv_tokenize(const char *input, Token tokens[]) {
     // token such as "ten.". Looking at the following character preserves both 5.5 and .5 while
     // treating a trailing period as punctuation.
     if (c == '.' && isdigit((unsigned char)input[i + 1])) {
-      if (length < TOKEN_SIZE - 1) {
-        buffer[length++] = c;
+      if (length >= TOKEN_SIZE - 1) {
+        ok = false;
+        continue;
       }
+      buffer[length++] = c;
       continue;
     }
 
@@ -77,32 +98,27 @@ static int prv_tokenize(const char *input, Token tokens[]) {
     // Spoken "minus" arrives as a word or a spaced/digit-adjacent '-', never between letters.
     if (c == '-' && length > 0 && isalpha((unsigned char)buffer[length - 1]) &&
         isalpha((unsigned char)input[i + 1])) {
-      prv_flush_token(tokens, &count, buffer, &length);
+      ok = prv_flush_token(tokens, &count, buffer, &length);
       continue;
     }
 
-    prv_flush_token(tokens, &count, buffer, &length);
+    ok = prv_flush_token(tokens, &count, buffer, &length);
     size_t symbol_length = 0;
     const char symbol = prv_unicode_operator(input + i, &symbol_length);
     if (symbol) {
-      if (count < MAX_TOKENS) {
-        tokens[count][0] = symbol;
-        tokens[count][1] = '\0';
-        count++;
-      }
+      ok = ok && prv_push_operator(tokens, &count, symbol);
       i += symbol_length - 1;
       continue;
     }
-    if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=') &&
-        count < MAX_TOKENS) {
-      tokens[count][0] = c;
-      tokens[count][1] = '\0';
-      count++;
+    if (ok && (c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=')) {
+      ok = prv_push_operator(tokens, &count, c);
     }
   }
 
-  prv_flush_token(tokens, &count, buffer, &length);
-  return count;
+  if (ok) {
+    ok = prv_flush_token(tokens, &count, buffer, &length);
+  }
+  return ok ? count : -1;
 }
 
 static char prv_operator_for_token(const char *token) {
@@ -521,6 +537,9 @@ bool parser_normalize_expression(const char *input, char *output, size_t output_
   output[0] = '\0';
   Token tokens[MAX_TOKENS];
   const int count = prv_tokenize(input, tokens);
+  if (count < 0) {
+    return false;
+  }
   bool expect_number = true;
   bool have_number = false;
 

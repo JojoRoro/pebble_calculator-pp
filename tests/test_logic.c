@@ -76,6 +76,30 @@ int main(void) {
                        "2000000000000/2", "1e+12");
   check_voice_language(PARSER_LANGUAGE_GERMAN, "1,5 Milliarden plus 1.", "1500000000+1",
                        "1500000001");
+  // German compounds below a million are one word, longer than a token; they split after tausend.
+  check_voice_language(PARSER_LANGUAGE_GERMAN,
+                       "neunhundertneunundneunzigtausendneunhundertneunundneunzig plus eins.",
+                       "999999+1", "1000000");
+  check_voice_language(PARSER_LANGUAGE_GERMAN,
+                       "siebenhundertsiebenundsiebzigtausendsiebenhundertsiebenundsiebzig.",
+                       "777777", "777777");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "zweitausendvierundzwanzig minus tausendeins.",
+                       "2024-1001", "1023");
+  check_voice_language(PARSER_LANGUAGE_GERMAN,
+                       "zwei Millionen dreihundertvierundfünfzigtausendeins.", "2354001",
+                       "2354001");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "Hundertfünfundzwanzig durch vier hoch acht.",
+                       "125/4^8", "0.001907348633");
+  // Words or transcripts too long for the token buffers fail instead of being silently cut.
+  assert(!parser_normalize_expression_for_language(
+      "fuenfhundertfuenfundfuenfzigmillionenfuenfhundertfuenfundfuenfzig", PARSER_LANGUAGE_GERMAN,
+      rejected, sizeof(rejected)));
+  assert(!parser_normalize_expression("123456789012345678901234 plus 1", rejected,
+                                      sizeof(rejected)));
+  assert(!parser_normalize_expression(
+      "1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1",
+      rejected, sizeof(rejected)));
+
   check_voice_language(PARSER_LANGUAGE_FRENCH, "trois milliards plus un.", "3000000000+1",
                        "3000000001");
   check_voice_language(PARSER_LANGUAGE_FRENCH, "un virgule cinq milliard plus un.",

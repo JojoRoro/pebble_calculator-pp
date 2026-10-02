@@ -13,13 +13,16 @@
 
 typedef char Token[TOKEN_SIZE];
 
-static void flush(Token tokens[], int *count, char *buf, int *len) {
-  if (*len == 0 || *count >= MAX_TOKENS) { *len = 0; return; }
+// Returns false when the token does not fit, so a long transcript fails instead of being cut short.
+static bool flush(Token tokens[], int *count, char *buf, int *len) {
+  if (*len == 0) return true;
+  if (*count >= MAX_TOKENS) { *len = 0; return false; }
   buf[*len] = '\0';
   strncpy(tokens[*count], buf, TOKEN_SIZE - 1);
   tokens[*count][TOKEN_SIZE - 1] = '\0';
   (*count)++;
   *len = 0;
+  return true;
 }
 
 static bool append_piece(char *buf, int *len, const char *s) {
@@ -85,33 +88,47 @@ static char unicode_op(const char *input, size_t *n) {
   return '\0';
 }
 
+static bool push_op(Token tokens[], int *count, char op) {
+  if (*count >= MAX_TOKENS) return false;
+  tokens[*count][0] = op;
+  tokens[*count][1] = '\0';
+  (*count)++;
+  return true;
+}
+
+// Returns the token count, or -1 when the transcript does not fit the token buffers.
 static int tokenize(const char *input, Token tokens[]) {
   int count = 0, len = 0;
+  bool ok = true;
   char buf[TOKEN_SIZE];
 
-  for (size_t i = 0; input && input[i]; ++i) {
+  for (size_t i = 0; ok && input && input[i]; ++i) {
     unsigned char raw = (unsigned char)input[i];
     if (raw < 0x80) {
       char c = (char)tolower(raw);
       if (isalnum(raw)) {
-        if (len < TOKEN_SIZE - 1) buf[len++] = c;
+        if (len >= TOKEN_SIZE - 1) { ok = false; continue; }
+        buf[len++] = c;
+        // German writes numbers below a million as one word. Splitting after "tausend" keeps
+        // even "siebenhundertsiebenundsiebzigtausendsiebenhundertsiebenundsiebzig" within a
+        // token; the number parser already reads a "...tausend" token followed by the rest.
+        if (len >= 7 && !memcmp(buf + len - 7, "tausend", 7) && next_alpha(input, i)) {
+          ok = flush(tokens, &count, buf, &len);
+        }
         continue;
       }
       if (c == '-' && buf_alpha(buf, len) && next_alpha(input, i)) {
-        flush(tokens, &count, buf, &len);
+        ok = flush(tokens, &count, buf, &len);
         continue;
       }
       if ((c == '.' || c == ',') && isdigit((unsigned char)input[i + 1]) &&
           (len == 0 || buf_numeric(buf, len))) {
-        if (len < TOKEN_SIZE - 1) buf[len++] = '.';
+        ok = append_piece(buf, &len, ".");
         continue;
       }
-      flush(tokens, &count, buf, &len);
-      if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=') &&
-          count < MAX_TOKENS) {
-        tokens[count][0] = c;
-        tokens[count][1] = '\0';
-        count++;
+      ok = flush(tokens, &count, buf, &len);
+      if (ok && (c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=')) {
+        ok = push_op(tokens, &count, c);
       }
       continue;
     }
@@ -119,23 +136,22 @@ static int tokenize(const char *input, Token tokens[]) {
     size_t op_len = 0;
     char op = unicode_op(input + i, &op_len);
     if (op) {
-      flush(tokens, &count, buf, &len);
-      if (count < MAX_TOKENS) { tokens[count][0] = op; tokens[count][1] = '\0'; count++; }
+      ok = flush(tokens, &count, buf, &len) && push_op(tokens, &count, op);
       i += op_len - 1;
       continue;
     }
 
     const char *folded = input[i + 1] ? fold_pair(raw, (unsigned char)input[i + 1]) : NULL;
     if (folded) {
-      append_piece(buf, &len, folded);
+      ok = append_piece(buf, &len, folded);
       i++;
       continue;
     }
-    flush(tokens, &count, buf, &len);
+    ok = flush(tokens, &count, buf, &len);
     while (input[i + 1] && (((unsigned char)input[i + 1] & 0xC0) == 0x80)) i++;
   }
-  flush(tokens, &count, buf, &len);
-  return count;
+  if (ok) ok = flush(tokens, &count, buf, &len);
+  return ok ? count : -1;
 }
 
 static bool numeric(const char *s) {
@@ -541,6 +557,7 @@ bool parser_normalize_expression_for_language(const char *input, ParserLanguage 
   out[0] = '\0';
   Token tokens[MAX_TOKENS];
   int count = tokenize(input, tokens);
+  if (count < 0) return false;
   bool expect_number = true, have_number = false;
 
   for (int i = 0; i < count; ++i) {
