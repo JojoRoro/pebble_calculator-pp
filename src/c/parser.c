@@ -22,6 +22,25 @@ static void prv_flush_token(Token tokens[], int *count, char *buffer, int *lengt
   *length = 0;
 }
 
+// Dictation may emit typographic math symbols instead of words. Returns the ASCII operator for a
+// UTF-8 sequence at input and stores its byte length, or returns '\0' when it is not one.
+static char prv_unicode_operator(const char *input, size_t *length) {
+  const unsigned char *s = (const unsigned char *)input;
+  if (s[0] == 0xC3 && s[1] == 0xB7) {  // ÷
+    *length = 2;
+    return '/';
+  }
+  if (s[0] == 0xC3 && s[1] == 0x97) {  // ×
+    *length = 2;
+    return '*';
+  }
+  if (s[0] == 0xE2 && s[1] == 0x88 && s[2] == 0x92) {  // − (minus sign)
+    *length = 3;
+    return '-';
+  }
+  return '\0';
+}
+
 static int prv_tokenize(const char *input, Token tokens[]) {
   int count = 0;
   char buffer[TOKEN_SIZE];
@@ -49,7 +68,26 @@ static int prv_tokenize(const char *input, Token tokens[]) {
       continue;
     }
 
+    // Hyphenated number words such as "forty-five" are a single spoken number, not a subtraction.
+    // Spoken "minus" is transcribed as a word or a spaced/digit-adjacent '-', never between letters.
+    if (c == '-' && length > 0 && isalpha((unsigned char)buffer[length - 1]) &&
+        isalpha((unsigned char)input[i + 1])) {
+      prv_flush_token(tokens, &count, buffer, &length);
+      continue;
+    }
+
     prv_flush_token(tokens, &count, buffer, &length);
+    size_t symbol_length = 0;
+    const char symbol = prv_unicode_operator(input + i, &symbol_length);
+    if (symbol) {
+      if (count < MAX_TOKENS) {
+        tokens[count][0] = symbol;
+        tokens[count][1] = '\0';
+        count++;
+      }
+      i += symbol_length - 1;
+      continue;
+    }
     if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '=') && count < MAX_TOKENS) {
       tokens[count][0] = c;
       tokens[count][1] = '\0';
@@ -182,6 +220,13 @@ static bool prv_parse_word_number(Token tokens[], int count, int start, int *use
     }
 
     if (!strcmp(token, "and") && !decimal) {
+      continue;
+    }
+
+    // "a hundred", "a thousand": the multiplier below already treats a missing count as one.
+    if (!strcmp(token, "a") && !decimal && i + 1 < count &&
+        (!strcmp(tokens[i + 1], "hundred") || !strcmp(tokens[i + 1], "thousand") ||
+         !strcmp(tokens[i + 1], "million"))) {
       continue;
     }
 

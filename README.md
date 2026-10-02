@@ -58,6 +58,7 @@ Examples:
 - `five over ten`
 - `fifty point five plus two`
 - `negative five plus two`
+- `forty-five divided by one hundred eighty-seven` (hyphenated number words and `÷ × −` symbols are understood)
 
 Common operators and forms include `plus`, `minus`, `times`, `multiplied by`, `divided by`, `over`, `point`, `equals`, and common English number words through millions.
 

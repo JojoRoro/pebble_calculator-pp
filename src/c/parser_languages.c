@@ -72,6 +72,15 @@ static bool buf_numeric(const char *buf, int len) {
   return digit;
 }
 
+// Dictation may emit typographic math symbols (÷, ×, U+2212 minus) instead of words.
+static char unicode_op(const char *input, size_t *n) {
+  const unsigned char *s = (const unsigned char *)input;
+  if (s[0] == 0xC3 && s[1] == 0xB7) { *n = 2; return '/'; }
+  if (s[0] == 0xC3 && s[1] == 0x97) { *n = 2; return '*'; }
+  if (s[0] == 0xE2 && s[1] == 0x88 && s[2] == 0x92) { *n = 3; return '-'; }
+  return '\0';
+}
+
 static int tokenize(const char *input, Token tokens[]) {
   int count = 0, len = 0;
   char buf[TOKEN_SIZE];
@@ -99,6 +108,15 @@ static int tokenize(const char *input, Token tokens[]) {
         tokens[count][1] = '\0';
         count++;
       }
+      continue;
+    }
+
+    size_t op_len = 0;
+    char op = unicode_op(input + i, &op_len);
+    if (op) {
+      flush(tokens, &count, buf, &len);
+      if (count < MAX_TOKENS) { tokens[count][0] = op; tokens[count][1] = '\0'; count++; }
+      i += op_len - 1;
       continue;
     }
 

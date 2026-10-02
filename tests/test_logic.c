@@ -38,6 +38,22 @@ int main(void) {
   check_voice("fifty point five plus two.", "50.5+2", "52.5");
   check_voice("5.5 over 10.", "5.5/10", "0.55");
 
+  // Newer dictation hyphenates compound number words; the hyphen is not a minus sign.
+  check_voice("forty-five divided by one hundred eighty-seven", "45/187", "0.2406417112");
+  check_voice("Forty-five divided by one hundred and eighty-seven.", "45/187", "0.2406417112");
+  check_voice("twenty-two minus seventy-one", "22-71", "-49");
+  check_voice("one-hundred-eighty-seven minus five", "187-5", "182");
+  check_voice("ninety-nine thousand nine hundred ninety-nine plus one", "99999+1", "100000");
+  check_voice("forty-five divided by a hundred eighty-seven", "45/187", "0.2406417112");
+  check_voice("45 - 5", "45-5", "40");
+  check_voice("45-5", "45-5", "40");
+  check_voice("forty five - five", "45-5", "40");
+  check_voice("45 \xC3\xB7 187", "45/187", "0.2406417112");
+  check_voice("6 \xC3\x97 7", "6*7", "42");
+  check_voice("10 \xE2\x88\x92 3", "10-3", "7");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "45 \xC3\xB7 9", "45/9", "5");
+  check_voice_language(PARSER_LANGUAGE_FRENCH, "6 \xC3\x97 7", "6*7", "42");
+
   // German has inverted compound numbers and commonly writes them as one word.
   check_voice_language(PARSER_LANGUAGE_GERMAN, "fünf plus zehn.", "5+10", "15");
   check_voice_language(PARSER_LANGUAGE_GERMAN, "fünf geteilt durch zehn.", "5/10", "0.5");
