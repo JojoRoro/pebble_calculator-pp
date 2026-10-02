@@ -1,11 +1,15 @@
 #include "parser.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #define MAX_TOKENS 64
 #define TOKEN_SIZE 48
+
+// Word numbers are built in 64-bit (Pebble's long is 32-bit) and capped below 10^15.
+#define MAX_SPOKEN 999999999999999LL
 
 typedef char Token[TOKEN_SIZE];
 
@@ -103,7 +107,8 @@ static int tokenize(const char *input, Token tokens[]) {
         continue;
       }
       flush(tokens, &count, buf, &len);
-      if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '=') && count < MAX_TOKENS) {
+      if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=') &&
+          count < MAX_TOKENS) {
         tokens[count][0] = c;
         tokens[count][1] = '\0';
         count++;
@@ -163,17 +168,20 @@ static char op_for(const char *t, ParserLanguage lang) {
   if (!strcmp(t, "-")) return '-';
   if (!strcmp(t, "*") || !strcmp(t, "x")) return '*';
   if (!strcmp(t, "/")) return '/';
+  if (!strcmp(t, "^")) return '^';
 
   if (lang == PARSER_LANGUAGE_GERMAN) {
     if (!strcmp(t, "plus") || !strcmp(t, "addiert") || !strcmp(t, "addiere")) return '+';
     if (!strcmp(t, "minus") || !strcmp(t, "weniger") || !strcmp(t, "subtrahiere")) return '-';
     if (!strcmp(t, "mal") || !strcmp(t, "multipliziert") || !strcmp(t, "multipliziere")) return '*';
     if (!strcmp(t, "durch")) return '/';
+    if (!strcmp(t, "hoch")) return '^';
   } else {
     if (!strcmp(t, "plus") || !strcmp(t, "additionne")) return '+';
     if (!strcmp(t, "moins") || !strcmp(t, "soustrais") || !strcmp(t, "soustrait")) return '-';
     if (!strcmp(t, "fois") || !strcmp(t, "multiplie")) return '*';
     if (!strcmp(t, "sur") || !strcmp(t, "divise")) return '/';
+    if (!strcmp(t, "puissance") || !strcmp(t, "exposant")) return '^';
   }
   return '\0';
 }
@@ -365,9 +373,60 @@ static bool decimal_tail(Token tokens[], int count, int *i, ParserLanguage lang,
   return any;
 }
 
+// Scale words from a thousand up. German and French use the long scale: Milliarde/milliard is
+// 10^9 and Billion/billion is 10^12.
+static int64_t scale_word(const char *t, ParserLanguage lang) {
+  if (lang == PARSER_LANGUAGE_GERMAN) {
+    if (!strcmp(t, "tausend")) return 1000LL;
+    if (!strcmp(t, "million") || !strcmp(t, "millionen")) return 1000000LL;
+    if (!strcmp(t, "milliarde") || !strcmp(t, "milliarden")) return 1000000000LL;
+    if (!strcmp(t, "billion") || !strcmp(t, "billionen")) return 1000000000000LL;
+    return 0;
+  }
+  if (!strcmp(t, "mille")) return 1000LL;
+  if (!strcmp(t, "million") || !strcmp(t, "millions")) return 1000000LL;
+  if (!strcmp(t, "milliard") || !strcmp(t, "milliards")) return 1000000000LL;
+  if (!strcmp(t, "billion") || !strcmp(t, "billions")) return 1000000000000LL;
+  return 0;
+}
+
+// Pebble's printf has no 64-bit integer conversion.
+static void format_int(int64_t v, char *out, size_t size) {
+  char rev[24];
+  int n = 0;
+  do { rev[n++] = (char)('0' + (int)(v % 10)); v /= 10; } while (v > 0 && n < (int)sizeof(rev));
+  size_t i = 0;
+  while (n > 0 && i + 1 < size) out[i++] = rev[--n];
+  out[i] = '\0';
+}
+
+static bool hundred_word(const char *t, ParserLanguage lang) {
+  if (lang == PARSER_LANGUAGE_GERMAN) return !strcmp(t, "hundert");
+  return !strcmp(t, "cent") || !strcmp(t, "cents");
+}
+
+static int64_t parse_int(const char *s, size_t n) {
+  if (n == 0 || n > 15) return -1;
+  int64_t v = 0;
+  for (size_t i = 0; i < n; ++i) v = v * 10 + (s[i] - '0');
+  return v;
+}
+
+// "1,5 Milliarden": the scale's zeros absorb decimal digits; any left over stay as the fraction.
+static bool scale_decimal(int64_t whole, char *d, int *dlen, int64_t scale, int64_t *out) {
+  if (whole > MAX_SPOKEN / scale) return false;
+  int64_t v = whole * scale, place = scale;
+  int taken = 0;
+  while (place > 1 && taken < *dlen) { place /= 10; v += (d[taken++] - '0') * place; }
+  memmove(d, d + taken, (size_t)(*dlen - taken) + 1);
+  *dlen -= taken;
+  *out = v;
+  return true;
+}
+
 static bool word_number(Token tokens[], int count, int start, ParserLanguage lang,
                         int *used, char *number, size_t size) {
-  long total = 0, current = 0;
+  int64_t total = 0, current = 0;
   bool seen = false, negative = false, decimal = false;
   char decimals[16] = "";
   int dlen = 0, i = start;
@@ -387,32 +446,59 @@ static bool word_number(Token tokens[], int count, int start, ParserLanguage lan
       if (!seen) break;
       decimal = true; i++;
       if (!decimal_tail(tokens, count, &i, lang, decimals, &dlen, sizeof(decimals))) return false;
+      int64_t ds = i < count ? scale_word(tokens[i], lang) : 0;
+      if (ds) {
+        int64_t scaled = 0;
+        if (!scale_decimal(current, decimals, &dlen, ds, &scaled)) return false;
+        total += scaled; current = 0; decimal = dlen > 0; i++;
+      }
       break;
+    }
+
+    // Digits mixed with scale words: "3 Milliarden", "1,5 billions", "757 milliards 945".
+    if (numeric(t) && current == 0) {
+      int64_t next_scale = i + 1 < count ? scale_word(tokens[i + 1], lang) : 0;
+      bool next_hundred = i + 1 < count && hundred_word(tokens[i + 1], lang);
+      bool after_scale = i > start && scale_word(tokens[i - 1], lang);
+      const char *dot = strchr(t, '.');
+      if (dot && next_scale) {
+        current = parse_int(t, (size_t)(dot - t));
+        dlen = (int)strlen(dot + 1);
+        if (current < 0 || dlen >= (int)sizeof(decimals)) return false;
+        memcpy(decimals, dot + 1, (size_t)dlen + 1);
+        int64_t scaled = 0;
+        if (!scale_decimal(current, decimals, &dlen, next_scale, &scaled)) return false;
+        total += scaled; current = 0; decimal = dlen > 0; seen = true; i += 2;
+        break;
+      }
+      if (!dot && (next_scale || next_hundred || after_scale)) {
+        current = parse_int(t, strlen(t));
+        if (current < 0) return false;
+        seen = true; i++; continue;
+      }
+      break;
+    }
+
+    int64_t scale = scale_word(t, lang);
+    if (scale) {
+      int64_t m = current ? current : 1;
+      if (m > MAX_SPOKEN / scale) return false;
+      total += m * scale; current = 0; seen = true; i++; continue;
     }
 
     if (lang == PARSER_LANGUAGE_GERMAN) {
       if (!strcmp(t, "und")) { i++; continue; }
       if (!strcmp(t, "hundert")) {
+        if (current > MAX_SPOKEN / 100) return false;
         current = (current ? current : 1) * 100; seen = true; i++; continue;
-      }
-      if (!strcmp(t, "tausend")) {
-        total += (current ? current : 1) * 1000; current = 0; seen = true; i++; continue;
-      }
-      if (!strcmp(t, "million") || !strcmp(t, "millionen")) {
-        total += (current ? current : 1) * 1000000; current = 0; seen = true; i++; continue;
       }
       long piece = 0;
       if (!de_compound(t, &piece)) break;
       current += piece; seen = true; i++; continue;
     }
 
-    if (!strcmp(t, "mille")) {
-      total += (current ? current : 1) * 1000; current = 0; seen = true; i++; continue;
-    }
-    if (!strcmp(t, "million") || !strcmp(t, "millions")) {
-      total += (current ? current : 1) * 1000000; current = 0; seen = true; i++; continue;
-    }
     if (!strcmp(t, "cent") || !strcmp(t, "cents")) {
+      if (current > MAX_SPOKEN / 100) return false;
       current = (current ? current : 1) * 100; seen = true; i++; continue;
     }
     int n = 0, v = 0;
@@ -421,9 +507,12 @@ static bool word_number(Token tokens[], int count, int start, ParserLanguage lan
   }
 
   if (!seen || (decimal && dlen == 0)) return false;
-  long whole = total + current;
-  if (decimal) snprintf(number, size, "%s%ld.%s", negative ? "-" : "", whole, decimals);
-  else snprintf(number, size, "%s%ld", negative ? "-" : "", whole);
+  int64_t whole = total + current;
+  if (whole > MAX_SPOKEN) return false;
+  char digits[24];
+  format_int(whole, digits, sizeof(digits));
+  if (decimal) snprintf(number, size, "%s%s.%s", negative ? "-" : "", digits, decimals);
+  else snprintf(number, size, "%s%s", negative ? "-" : "", digits);
   *used = i - start;
   return *used > 0;
 }
@@ -472,7 +561,9 @@ bool parser_normalize_expression_for_language(const char *input, ParserLanguage 
 
     if (!expect_number) return false;
 
-    if (numeric(t)) {
+    bool scaled_digits = i + 1 < count &&
+                         (scale_word(tokens[i + 1], lang) || hundred_word(tokens[i + 1], lang));
+    if (numeric(t) && !scaled_digits) {
       if (!append_numeric(tokens, count, &i, lang, out, size)) return false;
       expect_number = false; have_number = true; continue;
     }

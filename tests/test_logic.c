@@ -51,6 +51,60 @@ int main(void) {
   check_voice("45 \xC3\xB7 187", "45/187", "0.2406417112");
   check_voice("6 \xC3\x97 7", "6*7", "42");
   check_voice("10 \xE2\x88\x92 3", "10-3", "7");
+  // Scale words up to trillion; values beyond Pebble's 32-bit long must not overflow.
+  check_voice("Seven hundred and fifty seven billion nine hundred and forty five divided by "
+              "two hundred eighty seven thousand.",
+              "757000000945/287000", "2637630.665");
+  check_voice("three billion plus one", "3000000000+1", "3000000001");
+  check_voice("a billion minus a million", "1000000000-1000000", "999000000");
+  check_voice("two trillion five hundred billion divided by four", "2500000000000/4",
+              "6.25e+11");
+  check_voice("nine hundred ninety-nine trillion plus one", "999000000000000+1", "9.99e+14");
+  check_voice("one point five billion plus one", "1500000000+1", "1500000001");
+  check_voice("1.5 billion plus 1", "1500000000+1", "1500000001");
+  check_voice("3 billion plus 1", "3000000000+1", "3000000001");
+  check_voice("757 billion 945 divided by 287 thousand", "757000000945/287000", "2637630.665");
+  check_voice("one point two three four five thousand", "1234.5", "1234.5");
+  char rejected[CALCULATOR_EXPRESSION_MAX];
+  assert(!parser_normalize_expression("fifteen hundred trillion", rejected, sizeof(rejected)));
+  assert(!parser_normalize_expression("nine hundred hundred hundred hundred hundred hundred "
+                                      "hundred hundred hundred", rejected, sizeof(rejected)));
+  assert(!parser_normalize_expression("one point billion", rejected, sizeof(rejected)));
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "drei Milliarden plus eins.", "3000000000+1",
+                       "3000000001");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "zwei Billionen geteilt durch zwei.",
+                       "2000000000000/2", "1e+12");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "1,5 Milliarden plus 1.", "1500000000+1",
+                       "1500000001");
+  check_voice_language(PARSER_LANGUAGE_FRENCH, "trois milliards plus un.", "3000000000+1",
+                       "3000000001");
+  check_voice_language(PARSER_LANGUAGE_FRENCH, "un virgule cinq milliard plus un.",
+                       "1500000000+1", "1500000001");
+
+  // Powers: "to the power of", "squared", "hoch", "puissance".
+  check_voice("Ten to the power of forty-five divided by two.", "10^45/2", "5e+44");
+  check_voice("2 raised to the power of 10", "2^10", "1024");
+  check_voice("ten to the power of minus two", "10^-2", "0.01");
+  check_voice("five squared plus four cubed", "5^2+4^3", "89");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "zehn hoch 2", "10^2", "100");
+  check_voice_language(PARSER_LANGUAGE_GERMAN, "zwei hoch zehn geteilt durch vier.", "2^10/4",
+                       "256");
+  check_voice_language(PARSER_LANGUAGE_FRENCH, "deux à la puissance dix.", "2^10", "1024");
+  check_expression("2^3^2", "512");
+  check_expression("-2^2", "-4");
+  check_expression("(-2)^2", "4");
+  check_expression("2*3^2", "18");
+  check_expression("2^-2", "0.25");
+  check_expression("0^0", "1");
+  assert(calculator_set_expression("2^0.5"));
+  assert(!calculator_equals());
+  assert(calculator_set_expression("0^-1"));
+  assert(!calculator_equals());
+  assert(strcmp(calculator_result(), "Division by zero") == 0);
+  assert(calculator_set_expression("10^400-10^400"));
+  assert(!calculator_equals());
+  assert(strcmp(calculator_result(), "Result out of range") == 0);
+
   check_voice_language(PARSER_LANGUAGE_GERMAN, "45 \xC3\xB7 9", "45/9", "5");
   check_voice_language(PARSER_LANGUAGE_FRENCH, "6 \xC3\x97 7", "6*7", "42");
 

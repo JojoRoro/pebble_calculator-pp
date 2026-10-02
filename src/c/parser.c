@@ -1,11 +1,16 @@
 #include "parser.h"
 
 #include <ctype.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #define MAX_TOKENS 40
 #define TOKEN_SIZE 20
+
+// Largest spoken number accepted. Pebble's long is 32-bit, so word numbers are built in 64-bit,
+// and the cap keeps them well inside both int64 and the exact-integer range of double.
+#define MAX_SPOKEN_NUMBER 999999999999999LL
 
 typedef char Token[TOKEN_SIZE];
 
@@ -69,7 +74,7 @@ static int prv_tokenize(const char *input, Token tokens[]) {
     }
 
     // Hyphenated number words such as "forty-five" are a single spoken number, not a subtraction.
-    // Spoken "minus" is transcribed as a word or a spaced/digit-adjacent '-', never between letters.
+    // Spoken "minus" arrives as a word or a spaced/digit-adjacent '-', never between letters.
     if (c == '-' && length > 0 && isalpha((unsigned char)buffer[length - 1]) &&
         isalpha((unsigned char)input[i + 1])) {
       prv_flush_token(tokens, &count, buffer, &length);
@@ -88,7 +93,8 @@ static int prv_tokenize(const char *input, Token tokens[]) {
       i += symbol_length - 1;
       continue;
     }
-    if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '=') && count < MAX_TOKENS) {
+    if ((c == '+' || c == '-' || c == '*' || c == '/' || c == '^' || c == '=') &&
+        count < MAX_TOKENS) {
       tokens[count][0] = c;
       tokens[count][1] = '\0';
       count++;
@@ -116,7 +122,36 @@ static char prv_operator_for_token(const char *token) {
       !strcmp(token, "divided")) {
     return '/';
   }
+  if (!strcmp(token, "^") || !strcmp(token, "power")) {
+    return '^';
+  }
   return '\0';
+}
+
+// "to" and "raised" only introduce "the power of"; they carry no meaning on their own.
+static bool prv_is_power_lead(Token tokens[], int count, int index) {
+  if (strcmp(tokens[index], "to") && strcmp(tokens[index], "raised")) {
+    return false;
+  }
+  for (int i = index + 1; i < count; ++i) {
+    if (!strcmp(tokens[i], "power")) {
+      return true;
+    }
+    if (strcmp(tokens[i], "to") && strcmp(tokens[i], "the")) {
+      return false;
+    }
+  }
+  return false;
+}
+
+static const char *prv_postfix_power(const char *token) {
+  if (!strcmp(token, "squared")) {
+    return "^2";
+  }
+  if (!strcmp(token, "cubed")) {
+    return "^3";
+  }
+  return NULL;
 }
 
 static bool prv_is_terminal(const char *token) {
@@ -161,6 +196,38 @@ static int prv_tens_number(const char *token) {
   return -1;
 }
 
+static int64_t prv_scale_number(const char *token) {
+  if (!strcmp(token, "thousand")) {
+    return 1000LL;
+  }
+  if (!strcmp(token, "million")) {
+    return 1000000LL;
+  }
+  if (!strcmp(token, "billion")) {
+    return 1000000000LL;
+  }
+  if (!strcmp(token, "trillion")) {
+    return 1000000000000LL;
+  }
+  return 0;
+}
+
+// Pebble's printf has no 64-bit integer conversion, so format the digits here.
+static void prv_format_integer(int64_t value, char *buffer, size_t buffer_size) {
+  char reversed[24];
+  int length = 0;
+  do {
+    reversed[length++] = (char)('0' + (int)(value % 10));
+    value /= 10;
+  } while (value > 0 && length < (int)sizeof(reversed));
+
+  size_t i = 0;
+  while (length > 0 && i + 1 < buffer_size) {
+    buffer[i++] = reversed[--length];
+  }
+  buffer[i] = '\0';
+}
+
 static bool prv_is_numeric_token(const char *token) {
   bool saw_digit = false;
   bool saw_dot = false;
@@ -197,10 +264,41 @@ static bool prv_append_char(char *output, size_t output_size, char c) {
   return true;
 }
 
+static int64_t prv_parse_integer_text(const char *text, size_t length) {
+  if (length == 0 || length > 15) {
+    return -1;
+  }
+  int64_t value = 0;
+  for (size_t i = 0; i < length; ++i) {
+    value = value * 10 + (text[i] - '0');
+  }
+  return value;
+}
+
+// Applies a scale word to a decimal such as "1.5 billion": the scale's zeros absorb decimal
+// digits, and any that do not fit (as in "1.2345 thousand") stay as the fraction.
+static bool prv_scale_decimal(int64_t whole, char *digits, int *digit_count, int64_t scale,
+                              int64_t *out) {
+  if (whole > MAX_SPOKEN_NUMBER / scale) {
+    return false;
+  }
+  int64_t value = whole * scale;
+  int64_t place = scale;
+  int taken = 0;
+  while (place > 1 && taken < *digit_count) {
+    place /= 10;
+    value += (digits[taken++] - '0') * place;
+  }
+  memmove(digits, digits + taken, (size_t)(*digit_count - taken) + 1);
+  *digit_count -= taken;
+  *out = value;
+  return true;
+}
+
 static bool prv_parse_word_number(Token tokens[], int count, int start, int *used, char *number,
                                   size_t number_size) {
-  long total = 0;
-  long current = 0;
+  int64_t total = 0;
+  int64_t current = 0;
   bool seen = false;
   bool negative = false;
   bool decimal = false;
@@ -225,8 +323,7 @@ static bool prv_parse_word_number(Token tokens[], int count, int start, int *use
 
     // "a hundred", "a thousand": the multiplier below already treats a missing count as one.
     if (!strcmp(token, "a") && !decimal && i + 1 < count &&
-        (!strcmp(tokens[i + 1], "hundred") || !strcmp(tokens[i + 1], "thousand") ||
-         !strcmp(tokens[i + 1], "million"))) {
+        (!strcmp(tokens[i + 1], "hundred") || prv_scale_number(tokens[i + 1]))) {
       continue;
     }
 
@@ -239,6 +336,20 @@ static bool prv_parse_word_number(Token tokens[], int count, int start, int *use
     }
 
     if (decimal) {
+      const int64_t decimal_scale = prv_scale_number(token);
+      if (decimal_scale > 0) {
+        int64_t scaled = 0;
+        if (decimal_len == 0 ||
+            !prv_scale_decimal(current, decimal_digits, &decimal_len, decimal_scale, &scaled)) {
+          return false;
+        }
+        total += scaled;
+        current = 0;
+        decimal = decimal_len > 0;
+        i++;
+        break;
+      }
+
       int digit = prv_small_number(token);
       if (digit >= 0 && digit <= 9) {
         if (decimal_len < (int)sizeof(decimal_digits) - 1) {
@@ -261,6 +372,36 @@ static bool prv_parse_word_number(Token tokens[], int count, int start, int *use
       break;
     }
 
+    // Digits mixed with scale words: "3 billion", "1.5 trillion", "757 billion 945".
+    if (prv_is_numeric_token(token) && current == 0) {
+      const bool next_scales =
+          i + 1 < count && (prv_scale_number(tokens[i + 1]) || !strcmp(tokens[i + 1], "hundred"));
+      const bool after_scale = i > start && prv_scale_number(tokens[i - 1]);
+      const char *dot = strchr(token, '.');
+      if (dot && next_scales && prv_scale_number(tokens[i + 1])) {
+        current = prv_parse_integer_text(token, (size_t)(dot - token));
+        decimal_len = (int)strlen(dot + 1);
+        if (current < 0 || decimal_len >= (int)sizeof(decimal_digits)) {
+          return false;
+        }
+        memcpy(decimal_digits, dot + 1, (size_t)decimal_len + 1);
+        decimal = true;
+        seen = true;
+        continue;
+      }
+      const bool next_point = i + 1 < count &&
+                              (!strcmp(tokens[i + 1], "point") || !strcmp(tokens[i + 1], "dot"));
+      if (!dot && (next_scales || after_scale || next_point)) {
+        current = prv_parse_integer_text(token, strlen(token));
+        if (current < 0) {
+          return false;
+        }
+        seen = true;
+        continue;
+      }
+      break;
+    }
+
     const int small = prv_small_number(token);
     if (small >= 0) {
       current += small;
@@ -276,20 +417,21 @@ static bool prv_parse_word_number(Token tokens[], int count, int start, int *use
     }
 
     if (!strcmp(token, "hundred")) {
+      if (current > MAX_SPOKEN_NUMBER / 100) {
+        return false;
+      }
       current = (current == 0 ? 1 : current) * 100;
       seen = true;
       continue;
     }
 
-    if (!strcmp(token, "thousand")) {
-      total += (current == 0 ? 1 : current) * 1000;
-      current = 0;
-      seen = true;
-      continue;
-    }
-
-    if (!strcmp(token, "million")) {
-      total += (current == 0 ? 1 : current) * 1000000;
+    const int64_t scale = prv_scale_number(token);
+    if (scale > 0) {
+      const int64_t multiplier = current == 0 ? 1 : current;
+      if (multiplier > MAX_SPOKEN_NUMBER / scale) {
+        return false;
+      }
+      total += multiplier * scale;
       current = 0;
       seen = true;
       continue;
@@ -302,11 +444,17 @@ static bool prv_parse_word_number(Token tokens[], int count, int start, int *use
     return false;
   }
 
-  const long integer_value = total + current;
+  const int64_t integer_value = total + current;
+  if (integer_value > MAX_SPOKEN_NUMBER) {
+    return false;
+  }
+
+  char integer_text[24];
+  prv_format_integer(integer_value, integer_text, sizeof(integer_text));
   if (decimal) {
-    snprintf(number, number_size, "%s%ld.%s", negative ? "-" : "", integer_value, decimal_digits);
+    snprintf(number, number_size, "%s%s.%s", negative ? "-" : "", integer_text, decimal_digits);
   } else {
-    snprintf(number, number_size, "%s%ld", negative ? "-" : "", integer_value);
+    snprintf(number, number_size, "%s%s", negative ? "-" : "", integer_text);
   }
 
   *used = i - start;
@@ -383,7 +531,15 @@ bool parser_normalize_expression(const char *input, char *output, size_t output_
       break;
     }
 
-    if (prv_is_filler(token)) {
+    if (prv_is_filler(token) || prv_is_power_lead(tokens, count, i)) {
+      continue;
+    }
+
+    const char *postfix = prv_postfix_power(token);
+    if (postfix) {
+      if (expect_number || !prv_append_text(output, output_size, postfix)) {
+        return false;
+      }
       continue;
     }
 
@@ -407,7 +563,9 @@ bool parser_normalize_expression(const char *input, char *output, size_t output_
       return false;
     }
 
-    if (prv_is_numeric_token(token)) {
+    const bool scaled_digits =
+        i + 1 < count && (prv_scale_number(tokens[i + 1]) || !strcmp(tokens[i + 1], "hundred"));
+    if (prv_is_numeric_token(token) && !scaled_digits) {
       if (!prv_append_numeric_with_decimal(tokens, count, &i, output, output_size)) {
         return false;
       }

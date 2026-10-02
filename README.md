@@ -11,7 +11,7 @@ The aim is simple: make a calculator that feels like it belongs on a Pebble Time
 - **Voice input** using Pebble's normal Dictation UI. Press Select from the default app state, long-press Select, or tap **VOICE**.
 - **Selectable voice-calculation language** in the Pebble phone settings: English, German, or French.
 - **Deterministic natural-language parser** with language-specific number grammar and operator vocabulary rather than simple one-to-one word substitution.
-- **Normal calculator precedence**, so `2 + 3 x 4` evaluates to `14`.
+- **Normal calculator precedence**, so `2 + 3 x 4` evaluates to `14`. Powers (`^`, voice only) bind tightest and take whole-number exponents: `-2^2` is `-4`, `2^3^2` is `512`.
 - Decimal values, unary negative numbers, backspace/editing, result chaining, invalid-expression handling, and division-by-zero handling.
 - **Voice Auto/Edit setting** in the Pebble phone app via an offline Clay configuration page.
   - Auto: recognized speech is calculated immediately.
@@ -59,8 +59,12 @@ Examples:
 - `fifty point five plus two`
 - `negative five plus two`
 - `forty-five divided by one hundred eighty-seven` (hyphenated number words and `÷ × −` symbols are understood)
+- `seven hundred fifty seven billion nine hundred forty five divided by two hundred eighty seven thousand`
+- `1.5 trillion divided by 3`
+- `ten to the power of forty-five divided by two`
+- `five squared plus four cubed`
 
-Common operators and forms include `plus`, `minus`, `times`, `multiplied by`, `divided by`, `over`, `point`, `equals`, and common English number words through millions.
+Common operators and forms include `plus`, `minus`, `times`, `multiplied by`, `divided by`, `over`, `to the power of`, `raised to the power of`, `squared`, `cubed`, `point`, `equals`, and common English number words through trillions (also mixed with digits, as in `3 billion` or `1.5 trillion`).
 
 ### German
 
@@ -74,8 +78,10 @@ Examples:
 - `einhundertfünfundzwanzig minus fünfundzwanzig`
 - `zwei komma fünf mal vier`
 - `minus fünf plus zwei`
+- `zehn hoch zwei`
+- `1,5 Milliarden geteilt durch drei`
 
-The German parser understands German compound-number structure such as `einundzwanzig`, `fünfundfünfzig`, `einhundert...`, and `...tausend...`; it also accepts umlauts/ß and common ASCII transcription variants. Operators include forms such as `plus`, `minus`, `mal`, `multipliziert mit`, `geteilt durch`, `dividiert durch`, and `gleich`.
+The German parser understands German compound-number structure such as `einundzwanzig`, `fünfundfünfzig`, `einhundert...`, and `...tausend...`; it also accepts umlauts/ß and common ASCII transcription variants. Operators include forms such as `plus`, `minus`, `mal`, `multipliziert mit`, `geteilt durch`, `dividiert durch`, `hoch`, and `gleich`. Large numbers use the German scale: `Millionen`, `Milliarden` (10⁹), `Billionen` (10¹²).
 
 ### French
 
@@ -90,8 +96,10 @@ Examples:
 - `cent vingt-cinq moins vingt-cinq`
 - `deux virgule cinq fois quatre`
 - `moins cinq plus deux`
+- `deux à la puissance dix`
+- `trois milliards plus un`
 
-The French parser handles hyphenated number words and French-specific constructions such as `soixante-dix`, `quatre-vingts`, and `quatre-vingt-dix` instead of treating them as English-style tens. Operators include `plus`, `moins`, `fois`, `multiplié par`, `divisé par`, `sur`, and `égal`.
+The French parser handles hyphenated number words and French-specific constructions such as `soixante-dix`, `quatre-vingts`, and `quatre-vingt-dix` instead of treating them as English-style tens. Operators include `plus`, `moins`, `fois`, `multiplié par`, `divisé par`, `sur`, `puissance`/`exposant`, and `égal`. Large numbers use the French scale: `millions`, `milliards` (10⁹), `billions` (10¹²).
 
 For German and French numeric transcripts, comma decimals such as `5,5` are normalized to the calculator's internal decimal representation. Sentence-ending punctuation added by dictation is ignored.
 

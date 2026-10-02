@@ -22,7 +22,7 @@ static double prv_abs(double value) {
 }
 
 static bool prv_is_operator(char c) {
-  return c == '+' || c == '-' || c == '*' || c == '/';
+  return c == '+' || c == '-' || c == '*' || c == '/' || c == '^';
 }
 
 static void prv_clear_result_state(void) {
@@ -78,6 +78,11 @@ static bool prv_format_result(double value, char *buffer, size_t buffer_size) {
 
   buffer[0] = '\0';
   size_t length = 0;
+
+  // NaN (for example from an overflowed power minus itself) has no digits to show.
+  if (value != value) {
+    return false;
+  }
 
   if (prv_abs(value) < 1e-12) {
     value = 0.0;
@@ -271,17 +276,42 @@ static double prv_parse_number(EvalParser *parser) {
   return value;
 }
 
-static double prv_parse_factor(EvalParser *parser) {
-  const char *s = parser->text;
-  int sign = 1;
-
-  while (s[parser->pos] == '+' || s[parser->pos] == '-') {
-    if (s[parser->pos] == '-') {
-      sign = -sign;
-    }
-    parser->pos++;
+// Pebble apps have no libm pow(), so only whole-number exponents are supported, computed by
+// repeated squaring.
+static double prv_power(EvalParser *parser, double base, double exponent) {
+  if (exponent > 2147483647.0 || exponent < -2147483647.0 ||
+      exponent != (double)(int64_t)exponent) {
+    parser->ok = false;
+    return 0.0;
   }
 
+  int64_t remaining = (int64_t)exponent;
+  const bool invert = remaining < 0;
+  if (invert) {
+    if (prv_abs(base) < 1e-12) {
+      parser->division_by_zero = true;
+      parser->ok = false;
+      return 0.0;
+    }
+    remaining = -remaining;
+  }
+
+  double result = 1.0;
+  double square = base;
+  while (remaining > 0) {
+    if (remaining & 1) {
+      result *= square;
+    }
+    square *= square;
+    remaining >>= 1;
+  }
+  return invert ? 1.0 / result : result;
+}
+
+static double prv_parse_factor(EvalParser *parser);
+
+static double prv_parse_primary(EvalParser *parser) {
+  const char *s = parser->text;
   double value;
   if (s[parser->pos] == '(') {
     parser->pos++;
@@ -294,7 +324,37 @@ static double prv_parse_factor(EvalParser *parser) {
   } else {
     value = prv_parse_number(parser);
   }
+  return value;
+}
 
+// Exponentiation binds tighter than unary minus (-2^2 = -4) and is right-associative, so the
+// exponent is parsed as a full factor.
+static double prv_parse_power(EvalParser *parser) {
+  const double base = prv_parse_primary(parser);
+  if (!parser->ok || parser->text[parser->pos] != '^') {
+    return base;
+  }
+
+  parser->pos++;
+  const double exponent = prv_parse_factor(parser);
+  if (!parser->ok) {
+    return 0.0;
+  }
+  return prv_power(parser, base, exponent);
+}
+
+static double prv_parse_factor(EvalParser *parser) {
+  const char *s = parser->text;
+  int sign = 1;
+
+  while (s[parser->pos] == '+' || s[parser->pos] == '-') {
+    if (s[parser->pos] == '-') {
+      sign = -sign;
+    }
+    parser->pos++;
+  }
+
+  const double value = prv_parse_power(parser);
   return (double)sign * value;
 }
 
@@ -479,7 +539,7 @@ bool calculator_set_expression(const char *expression) {
   for (size_t i = 0; i < len; ++i) {
     const char c = expression[i];
     if (!(isdigit((unsigned char)c) || c == '.' || c == '+' || c == '-' || c == '*' ||
-          c == '/' || c == '(' || c == ')' || c == 'e' || c == 'E')) {
+          c == '/' || c == '^' || c == '(' || c == ')' || c == 'e' || c == 'E')) {
       return false;
     }
   }
